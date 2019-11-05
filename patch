@@ -1,0 +1,373 @@
+commit 0bb929c1004c4321c9634e9166e4f1fe1de93308
+Author: Jack Sharkey <sharkeyjack11@gmail.com>
+Date:   Mon Nov 4 18:24:08 2019 -0600
+
+    Revert "init"
+    
+    This reverts commit 2ae8fb03254b4119cd4bd4c24be3c6b295058fcf.
+
+diff --git a/.gcloudignore b/.gcloudignore
+deleted file mode 100644
+index a3f0c76..0000000
+--- a/.gcloudignore
++++ /dev/null
+@@ -1,17 +0,0 @@
+-# This file specifies files that are *not* uploaded to Google Cloud Platform
+-# using gcloud. It follows the same syntax as .gitignore, with the addition of
+-# "#!include" directives (which insert the entries of the given .gitignore-style
+-# file at that point).
+-#
+-# For more information, run:
+-#   $ gcloud topic gcloudignore
+-#
+-.gcloudignore
+-# If you would like to upload your .git directory, .gitignore file or files
+-# from your .gitignore file, remove the corresponding line
+-# below:
+-.git
+-.gitignore
+-
+-# Node.js dependencies:
+-node_modules/
+\ No newline at end of file
+diff --git a/app.js b/app.js
+index 8dcaaff..6845cad 100644
+--- a/app.js
++++ b/app.js
+@@ -8,10 +8,10 @@ const security = require('./helpers/security')
+ const auth = require('./helpers/auth')
+ const cacheRoute = require('./helpers/cache-route')
+ const socket = require('./helpers/socket')
++
+ const app = express()
+-var GoogleSpreadsheet = require('google-spreadsheet');
+ 
+-app.set('port', (process.env.PORT || 3000))
++app.set('port', (process.env.PORT || 5000))
+ app.set('views', __dirname + '/views')
+ app.set('view engine', 'ejs')
+ 
+@@ -25,20 +25,8 @@ app.use(session({
+   saveUninitialized: true
+ }))
+ 
+-var Twit = require('twit')
+-
+-var T = new Twit({
+-  consumer_key: process.env.TWITTER_CONSUMER_KEY,
+-  consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+-  access_token: process.env.TWITTER_ACCESS_TOKEN,
+-  access_token_secret: process.env.TWITTER_ACCESS_TOKEN_SECRET,
+-  timeout_ms: 60 * 1000,  // optional HTTP request timeout to apply to all requests.
+-  strictSSL: true,     // optional - requires SSL certificates to be valid.
+-})
+-
+-
+ // start server
+-const server = app.listen(app.get('port'), function () {
++const server = app.listen(app.get('port'), function() {
+   console.log('Node app is running on port', app.get('port'))
+ })
+ 
+@@ -52,7 +40,7 @@ var parseForm = bodyParser.urlencoded({ extended: false })
+ /**
+  * Receives challenge response check (CRC)
+  **/
+-app.get('/webhook/twitter', function (request, response) {
++app.get('/webhook/twitter', function(request, response) {
+ 
+   var crc_token = request.query.crc_token
+ 
+@@ -70,10 +58,26 @@ app.get('/webhook/twitter', function (request, response) {
+ })
+ 
+ 
++/**
++ * Receives Account Acitivity events
++ **/
++app.post('/webhook/twitter', function(request, response) {
++
++  console.log(request.body)
++  
++  socket.io.emit(socket.activity_event, {
++    internal_id: uuid(),
++    event: request.body
++  })
++
++  response.send('200 OK')
++})
++
++
+ /**
+  * Serves the home page
+  **/
+-app.get('/', function (request, response) {
++app.get('/', function(request, response) {
+   response.render('index')
+ })
+ 
+@@ -124,193 +128,3 @@ app.get('/activity', auth.basic, require('./routes/activity'))
+ app.get('/callbacks/:action', passport.authenticate('twitter', { failureRedirect: '/' }),
+   require('./routes/sub-callbacks'))
+ 
+-
+-
+-/*
+- Receives Account Acitivity events
+- */
+-app.post('/webhook/twitter', function (request, response) {
+-  let data = request.body
+-  if (data["tweet_create_events"]) {
+-    if (data["tweet_create_events"][0]["retweeted_status"] != undefined) {
+-      parse_rt(data["tweet_create_events"][0])
+-    } 
+-  } else if (data["direct_message_events"]) {
+-    parse_dm(data)
+-  }
+-
+-  socket.io.emit(socket.activity_event, {
+-    internal_id: uuid(),
+-    event: request.body
+-  })
+-
+-  response.send('200 OK')
+-})
+-/*
+-Parse the DM event from twitter and see if it needs to be added to the sheet
+-*/
+-const parse_dm = (message) => {
+-  let text = message["direct_message_events"][0]["message_create"]["message_data"]["text"]
+-  let sender_id = message["direct_message_events"][0]["message_create"]["sender_id"]
+-  text = text.substring(0, 42)
+-  if (text.substring(0, 2) == "0x") {
+-    get_participants().then(function (people) {
+-      for (i in people) {
+-        if (people[i].address == text) {
+-          return console.log("Don't need to add")
+-        }
+-      }
+-      text = text.substring(0, 42)
+-      return update_sheet_with_address(text, sender_id, people)
+-    })
+-  }
+-}
+-
+-/*
+-Parse a retweet event from twitter and see if they need to be added to the sheet
+-*/
+-const parse_rt = (data) => {
+-  let tweetid = data["retweeted_status"]["id_str"]
+-  let screen_name = data["user"]["screen_name"]
+-  console.log(tweetid)
+-  console.log(screen_name)
+-  get_retweets().then(function(retweets, err) {
+-    //tweet is in the sheet
+-    if (retweets[tweetid] != undefined) {
+-      if(retweets[tweetid][screen_name] != undefined) {
+-        if(retweets[tweetid][screen_name] == 'TRUE') {
+-          return
+-        }
+-      }
+-    }
+-    return update_retweet_sheet(tweetid,screen_name)
+-    
+-  })
+-}
+-
+-
+-/*
+-Locate the retweeter's screen name and decide if a row needs to be updated or added
+-Will edit/add an address on the sheet
+-*/
+-const update_sheet_with_address = (text, sender_id, people) => {
+-  //get their twitter handle 
+-  T.get('users/lookup', { user_id: sender_id, include_entities: false }, function (err, user) {
+-    screen_name = user[0].screen_name
+-
+-    //go through all rows of spreadsheet and see if their handle is already there
+-    let i;
+-    for (i = 0; i < people.length; i++) {
+-      if (people[i].twitter == screen_name) {
+-        //found the user's data on the sheet, let's update it with their address
+-        console.log("Updating sheet at " + people[i].row_number)
+-        people[i].address = text
+-        return update_participants_sheet(people[i], false)
+-      }
+-    }
+-    let person = {
+-      address: text,
+-      twitter: screen_name,
+-      row_number: (i + 1)
+-    }
+-    update_participants_sheet(person, true)
+-  })
+-  return
+-}
+-
+-/*
+-Pull the data from the participants spreadsheet
+-Returns an array of objects containg {address,name,twitter,email,row-number}
+-*/
+-function get_participants() {
+-  return new Promise(function (resolve, reject) {
+-    var creds = require('./crypto-201803-ea9734b5c249.json');
+-    var doc = new GoogleSpreadsheet('1d_UGlOztaekxexXWeZngXWNMoOHqu7A8EeIasIxoOlM');
+-    doc.useServiceAccountAuth(creds, function (err) {
+-      let people = []
+-      // Get all of the rows from the spreadsheet.
+-      doc.getRows(1, function (err, rows) {
+-        if (err) reject(err)
+-        for (i in rows) {
+-          if (rows[i].address.length > 0) {
+-            let person = {
+-              address: rows[i].address,
+-              name: rows[i].name,
+-              twitter: rows[i].twitter,
+-              email: rows[i].email,
+-              row_number: (parseInt(i))
+-            }
+-            people.push(person)
+-          }
+-        }
+-        resolve(people)
+-      });
+-    });
+-  })
+-}
+-
+-var creds = require('./crypto-201803-ea9734b5c249.json');
+-var doc = new GoogleSpreadsheet('1d_UGlOztaekxexXWeZngXWNMoOHqu7A8EeIasIxoOlM');
+-
+-/*
+-Pull the data from the retweets spreadsheet
+-Returns a dictionary of dictionaries such as:
+-dict[tweet_id] = {twitter_handle1: paid_out, twitter_handle2 : paid _out}
+-The keys in the inner dictionary are the users who retweeted this specific tweet and maps to if they've been paid out
+-*/
+-function get_retweets() {
+-  return new Promise(function (resolve, reject) {
+-    doc.useServiceAccountAuth(creds, function (err) {
+-      let tweets = {}
+-      // Get all of the rows from the spreadsheet.
+-      doc.getRows(2, function (err, rows) {
+-        if (err) reject(err)
+-        for (i in rows) {
+-          if (!tweets[rows[i].tweetid]) {
+-            tweets[rows[i].tweetid] = {}
+-          }
+-          tweets[rows[i].tweetid][rows[i].screenname] = rows[i].paid
+-        }
+-        resolve(tweets)
+-      });
+-    });
+-  })
+-}
+-
+-
+-/*
+-Update the particpants sheet with a twitter user's TBT address
+-new_row: true if need to add a row to the end of document, false if twitter handle is already there
+-person: data from DM to add to sheet
+-*/
+-const update_participants_sheet = (person, new_row) => {
+-  
+-  doc.useServiceAccountAuth(creds, function (err) {
+-    // Get all of the rows from the spreadsheet.
+-    if (!new_row) {
+-      doc.getRows(1, function (err, rows) {
+-        rows[person.row_number].address = person.address
+-        rows[person.row_number].save()
+-      });
+-    } else {
+-      doc.addRow(1, { twitter: person.twitter, address: person.address }, function (err, row) {
+-        return
+-      })
+-    }
+-  });
+-}
+-
+-/*
+-Update the retweets sheet with a new row containing the twitter handle to pay out
+-tweetid: id of the retweeted tweet
+-screen_name: retweeters twitter handle
+-*/
+-const update_retweet_sheet = (tweetid, screen_name) => {
+-  var creds = require('./crypto-201803-ea9734b5c249.json');
+-  var doc = new GoogleSpreadsheet('1d_UGlOztaekxexXWeZngXWNMoOHqu7A8EeIasIxoOlM');
+-  doc.useServiceAccountAuth(creds, function (err) {
+-      doc.addRow(2, {tweetid: tweetid, screenname: screen_name, paid : 'FALSE'}, function (err, row) {
+-        return
+-      })
+-    })
+-}
+\ No newline at end of file
+diff --git a/app.yaml b/app.yaml
+deleted file mode 100644
+index 679f100..0000000
+--- a/app.yaml
++++ /dev/null
+@@ -1 +0,0 @@
+-runtime: nodejs10
+\ No newline at end of file
+diff --git a/crypto-201803-ea9734b5c249.json b/crypto-201803-ea9734b5c249.json
+deleted file mode 100644
+index f4857bd..0000000
+--- a/crypto-201803-ea9734b5c249.json
++++ /dev/null
+@@ -1,13 +0,0 @@
+-{
+-    "type": "service_account",
+-    "project_id": "crypto-201803",
+-    "private_key_id": "ea9734b5c24994e27d6fc157076d9b64623d5a06",
+-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCrrcyzLzKCQABI\nPMpUsDPI9xH3KfeE/CST4ZR7bFkiUInzI4Zm8rq/eOoZX/kVCEEY0CzxSegByeVt\nUxCrjgbG3wYvF5AUmfAKygAUrodsbaIcIkpzEl3xrABkJUqkEUOxNSHLKrk+bGdP\nT6Lw8205fLcBtDDRXEuC1WeFjwWALkvDVe1Ud3ufQhDPQuhHPvp8AbL7X2weYgVQ\ndUkoxtKerJRsV7Ls/Te7NiRyVCKGCqjPD0D2J0MRDtjWXCZdGxZTOHsaz7lQ7cdc\n86lSPWns/2K2j2MjyZFPGlTy8ESIHapomTBlPZ8N4Sc08ar0Y98CtTR6SOYEgp5j\nolbNpVoLAgMBAAECggEAB32cVl8jUYqQWJaKb3qGr+iT2Jh0q9FCmU845s+57eTc\nuAafSSOjIVKZyESnPhMvn/EJXPfQDy/rekMrEYkvY4L8ppZdG4EB976LlVtuHj2E\nWrzmSbIN9kr+c2ArKxBzxyod0NsK3R3mvg+n+OJuLBl0dLcTgDcKNmmwTCQK5eZM\n3rFvwAMwEEjVzgxjx4xzs0pCZPqlsXu27a+P3f8TsdOsEHT/AYStT+wrb1NPYWd/\n2wxyv/gDIzwcNyU+HM4yU2WbsqCy+2IqDUnowYR+n46F6fOVYPurzp/9f95OJ93F\nygJ90DI/g13tLnQ4+t2Gltg59eWerSdjV2nsqskIVQKBgQDjC+8m2R+E2tJqEYJK\nUrhH9+tVyR55CVaAf8J4P6/6NMR/sFVeUdBUuzWGSmHuMxZWR7B6OlJAPWv1tUKb\nHZWg46ccksgV0JRpRTZ1nNNPUvz1vGj1VYLckdGrvVeq8slulh4wySXnhonti3lL\ntCuYgV/IUe4XBdo2+PXTv671tQKBgQDBklrfmTTF+mJ7pRIOc0ZCz3jTh0zAZhMM\nAjUSZMZMrAiWtv1/2JLqvDAfylMZFsJBBaoV+Mah7/L5ClGy0HsyPPJcw7VPP/d5\n+/1MeByEU87RBl7j7fbHJ7+hTIhCXpcYhgt2+d2j9PiMCWfzL1f4w2ukdWKAUlBx\n6LPvc7DovwKBgDPYRMrVJ4pZwVRxHRRFoUjlxro3C5tN04/SHKECwfdbV0dlB4lb\nGzxN52H72DLhPYeEJTsz2BZNMDrSIhxze/haI421wrSghVMod9AReHsTkym11S24\nUgJ11a/ms38Yo4B6DPjM5bfhk9tHTvJHePEBEdMXSku9jV+iJ9grXBNFAoGAILSa\nuAbJvN2WQC/ewiRF7cniL1M/644Tj8bbsrTmMFQsy1I1uKEeCZ0sQGLN8YI/5f6Q\nA1BaN0g0dFGDBkRlXFKh3HyQqMg1Bx5FaOMuZklGu1hpNfeh53pWzWkB6LzUqKcV\nTs/e2/HrALYiIxuPsI9MI6hVsTq3LtfTdxTEAj8CgYBS2yWuZiGElhuu3vcZIx4v\nI3IvzfvDkXMqBW9UeN5yv2yIlmCsszBNxE49h0H163d0iCUAWEjv3McPZBTViAzG\nHuDsF7PTWzEz2jUY1tnEXjeuXFD+shJjE+3ajHoo38SNG9kPUhfvyW+QZwtdkejd\n58cD0QrpYs5kQrfhchCz8w==\n-----END PRIVATE KEY-----\n",
+-    "client_email": "attendance@crypto-201803.iam.gserviceaccount.com",
+-    "client_id": "109760798260631038433",
+-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+-    "token_uri": "https://oauth2.googleapis.com/token",
+-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/attendance%40crypto-201803.iam.gserviceaccount.com"
+-  }
+-  
+\ No newline at end of file
+diff --git a/env.template b/env.template
+new file mode 100644
+index 0000000..43603f8
+--- /dev/null
++++ b/env.template
+@@ -0,0 +1,5 @@
++TWITTER_CONSUMER_KEY=
++TWITTER_CONSUMER_SECRET=
++TWITTER_ACCESS_TOKEN=
++TWITTER_ACCESS_TOKEN_SECRET=
++TWITTER_WEBHOOK_ENV=
+\ No newline at end of file
+diff --git a/package.json b/package.json
+index f228663..c79a6a7 100644
+--- a/package.json
++++ b/package.json
+@@ -3,7 +3,7 @@
+   "version": "1.0.0",
+   "description": "Sample web app and helper scripts to get started with Twitter's Account Activity API",
+   "engines": {
+-    "node": "10.*"
++    "node": "5.9.1"
+   },
+   "main": "index.js",
+   "scripts": {
+@@ -17,8 +17,6 @@
+     "ejs": "^2.5.7",
+     "express": "4.13.3",
+     "express-session": "^1.15.6",
+-    "google-spreadsheet": "^2.0.8",
+-    "googleapis": "^39.2.0",
+     "http-auth": "^3.2.3",
+     "memory-cache": "^0.2.0",
+     "passport": "^0.4.0",
+@@ -28,7 +26,6 @@
+     "request": "^2.83.0",
+     "request-promise": "^4.2.2",
+     "socket.io": "2.0.4",
+-    "twit": "^2.2.11",
+     "uuid": "^3.2.1"
+   },
+   "repository": {
