@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Sample web app and helper scripts to get started with Twitter's Account Activity API",
   "engines": {
-    "node": "5.9.1"
+    "node": "10.*"
   },
   "main": "index.js",
   "scripts": {
@@ -17,6 +17,8 @@
     "ejs": "^2.5.7",
     "express": "4.13.3",
     "express-session": "^1.15.6",
+    "google-spreadsheet": "^2.0.8",
+    "googleapis": "^39.2.0",
     "http-auth": "^3.2.3",
     "memory-cache": "^0.2.0",
     "passport": "^0.4.0",
@@ -26,6 +28,7 @@
     "request": "^2.83.0",
     "request-promise": "^4.2.2",
     "socket.io": "2.0.4",
+    "twit": "^2.2.11",
     "uuid": "^3.2.1"
   },
   "repository": {
